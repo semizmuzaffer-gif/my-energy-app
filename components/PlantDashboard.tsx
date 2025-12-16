@@ -6,6 +6,19 @@ import type { Plant } from "@/lib/types";
 import EnergyFlowDiagram from "@/components/EnergyFlowDiagram";
 import PlantEnergyGraph, { TelemetryHistoryPoint } from "@/components/PlantEnergyGraph";
 
+const getApiBase = () => {
+  // Browser (client) → relative fetch
+  if (typeof window !== "undefined") return "";
+
+  // Server (Vercel SSR) → kendi origin’i
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+
+  // Fallback (çok nadir)
+  return "";
+};
+
 interface LiveMeasurement {
   p_total: number;
   p_l1: number;
@@ -122,24 +135,23 @@ export default function PlantDashboard({ plant }: Props) {
   const lastTsRef = useRef<string | null>(null);
   const initialLoadedRef = useRef(false);
 
-  const fetchTelemetry = async (mode: "init" | "poll") => {
-    try {
-      const url =
-        mode === "init"
-          ? `/api/plants/${plant.id}/telemetry?limit=120`
-          : `/api/plants/${plant.id}/telemetry?limit=1`;
+ const fetchTelemetry = async (mode: "init" | "poll") => {
+  try {
+    const base = getApiBase();
+    const path =
+      mode === "init"
+        ? `/api/plants/${plant.id}/telemetry?limit=120`
+        : `/api/plants/${plant.id}/telemetry?limit=1`;
 
-      const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch(`${base}${path}`, {
+      cache: "no-store",
+    });
 
-      if (!res.ok) {
-        if (res.status === 404) {
-          throw new Error("Bu tesis için henüz telemetri verisi yok");
-        }
-        throw new Error(`API hatası: ${res.status}`);
-      }
+    if (!res.ok) {
+      throw new Error(`API error ${res.status}`);
+    }
 
-      const json = await res.json();
-
+    const json = await res.json();
       // API: { plantId, points, latest }
       const latestRaw: ApiPoint | null = json?.latest ?? null;
       const pointsRaw: ApiPoint[] = Array.isArray(json?.points) ? json.points : [];
