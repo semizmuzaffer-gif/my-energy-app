@@ -20,6 +20,10 @@ async function fetchPlants(): Promise<Plant[]> {
   }
 
   return res.json();
+  } catch (e) {
+    console.warn("fetchPlants exception:", e);
+    return [];
+  }
 }
 
 /* -------------------------------------------------
