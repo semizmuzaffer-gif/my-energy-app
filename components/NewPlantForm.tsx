@@ -1,216 +1,120 @@
-// components/NewPlantForm.tsx
 "use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-type PhaseType = "single" | "three";
-
-interface NewPlantFormValues {
-  plantId: number;   // Dongle ile aynı ID
-  name: string;
-  address: string;
-  capacityKw: number;
-  phaseType: PhaseType;
-}
-
-const defaultValues: NewPlantFormValues = {
-  plantId: 0,
-  name: "",
-  address: "",
-  capacityKw: 0,
-  phaseType: "three",
-};
-
 export default function NewPlantForm() {
-  const [values, setValues] = useState<NewPlantFormValues>(defaultValues);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
 
-  function updateField<K extends keyof NewPlantFormValues>(
-    key: K,
-    value: NewPlantFormValues[K]
-  ) {
-    setValues((prev) => ({ ...prev, [key]: value }));
-  }
+  const [name, setName] = useState("");
+  const [address, setAddress] = useState("");
+  const [plantKey, setPlantKey] = useState("");
+  const [capacityKw, setCapacityKw] = useState<number>(0);
+  const [phaseType, setPhaseType] = useState<"three" | "single">("three");
 
-  async function handleSubmit(e: React.FormEvent) {
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
-
-    if (!values.plantId || values.plantId <= 0) {
-      setError("Tesis ID (Plant ID) zorunludur ve 0'dan büyük olmalıdır.");
-      return;
-    }
-    if (!values.name.trim()) {
-      setError("Tesis adı zorunludur.");
-      return;
-    }
+    setErr(null);
+    setSaving(true);
 
     try {
-      setSaving(true);
-
       const res = await fetch("/api/plants", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        body: JSON.stringify({
+          name,
+          address,
+          plantKey: plantKey || null,
+          capacityKw,
+          phaseType,
+        }),
       });
 
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setError(
-          body?.error ||
-            "Tesis kaydedilemedi. Daha sonra tekrar deneyiniz."
-        );
-        return;
-      }
-
       const data = await res.json();
-      // Kaydettikten sonra ilgili tesisin dashboard sayfasına git
+      if (!res.ok) throw new Error(data?.error || "Plant create failed");
+
+      // yeni tesise yönlendir
       router.push(`/plants/${data.id}`);
-    } catch (err) {
-      console.error(err);
-      setError("Sunucuya ulaşılamadı.");
+      router.refresh();
+    } catch (e: any) {
+      setErr(e?.message ?? "Kaydedilemedi");
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <form
-      onSubmit={handleSubmit}
-      className="rounded-3xl border border-white/10 bg-white/5 px-6 py-6 space-y-6"
-    >
-      {/* Genel bilgiler */}
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-slate-50">
-          Tesis Temel Bilgileri
-        </h2>
+    <form onSubmit={onSubmit} className="space-y-4 rounded-3xl border border-white/10 bg-white/5 p-6">
+      <div className="space-y-1">
+        <label className="text-xs text-slate-300">Tesis Adı</label>
+        <input
+          className="w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+      </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="space-y-1">
-            <label className="block text-xs font-medium text-slate-200">
-              Tesis ID (Plant ID)
-            </label>
-            <input
-              type="number"
-              className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-cyan-400"
-              value={values.plantId || ""}
-              onChange={(e) =>
-                updateField("plantId", Number(e.target.value) || 0)
-              }
-            />
-            <p className="text-[11px] text-slate-400">
-              Dongle üzerinde ayarlayacağınız ID ile bire bir aynı olmalı.
-            </p>
-          </div>
+      <div className="space-y-1">
+        <label className="text-xs text-slate-300">Adres</label>
+        <input
+          className="w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm"
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+        />
+      </div>
 
-          <div className="space-y-1 md:col-span-2">
-            <label className="block text-xs font-medium text-slate-200">
-              Tesis Adı
-            </label>
-            <input
-              type="text"
-              className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-cyan-400"
-              value={values.name}
-              onChange={(e) => updateField("name", e.target.value)}
-              placeholder="Ör: GRÜNTECH OFİS TÜKETİM İZLEME"
-            />
-          </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="space-y-1">
+          <label className="text-xs text-slate-300">Kurulu Güç (kWp)</label>
+          <input
+            type="number"
+            className="w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm"
+            value={capacityKw}
+            onChange={(e) => setCapacityKw(Number(e.target.value))}
+            step="0.1"
+            min={0}
+          />
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-1">
-            <label className="block text-xs font-medium text-slate-200">
-              Adres / Lokasyon
-            </label>
-            <input
-              type="text"
-              className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-cyan-400"
-              value={values.address}
-              onChange={(e) => updateField("address", e.target.value)}
-              placeholder="Ör: Kepez / Antalya"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="block text-xs font-medium text-slate-200">
-              Kurulu Güç (kWp)
-            </label>
-            <input
-              type="number"
-              className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm outline-none focus:border-cyan-400"
-              value={values.capacityKw || ""}
-              onChange={(e) =>
-                updateField("capacityKw", Number(e.target.value) || 0)
-              }
-              placeholder="Ör: 10"
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* Faz tipi */}
-      <section className="space-y-4">
-        <h2 className="text-lg font-semibold text-slate-50">
-          Teknik Özellikler
-        </h2>
-
-        <div className="grid gap-4 md:grid-cols-3">
-          <div className="space-y-1">
-            <label className="block text-xs font-medium text-slate-200">
-              Faz Tipi
-            </label>
-            <div className="flex items-center gap-3 text-xs text-slate-200">
-              <button
-                type="button"
-                onClick={() => updateField("phaseType", "single")}
-                className={`rounded-full px-3 py-1 border ${
-                  values.phaseType === "single"
-                    ? "border-emerald-400 bg-emerald-500/20 text-emerald-100"
-                    : "border-white/15 bg-black/40"
-                }`}
-              >
-                1 Faz
-              </button>
-              <button
-                type="button"
-                onClick={() => updateField("phaseType", "three")}
-                className={`rounded-full px-3 py-1 border ${
-                  values.phaseType === "three"
-                    ? "border-cyan-400 bg-cyan-500/20 text-cyan-100"
-                    : "border-white/15 bg-black/40"
-                }`}
-              >
-                3 Faz
-              </button>
-            </div>
-          </div>
+        <div className="space-y-1">
+          <label className="text-xs text-slate-300">Faz Tipi</label>
+          <select
+            className="w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm"
+            value={phaseType}
+            onChange={(e) => setPhaseType(e.target.value === "single" ? "single" : "three")}
+          >
+            <option value="three">3 Faz</option>
+            <option value="single">1 Faz</option>
+          </select>
         </div>
 
-        <p className="text-[11px] text-slate-400">
-          Detaylı EMS ve enerji parametrelerini daha sonra{" "}
-          <span className="font-semibold">Tesis Parametre Ayarları</span> ekranından
-          yapılandıracaksınız.
-        </p>
-      </section>
+        <div className="space-y-1">
+          <label className="text-xs text-slate-300">Plant Key (opsiyonel)</label>
+          <input
+            className="w-full rounded-xl bg-black/40 border border-white/10 px-3 py-2 text-sm font-mono"
+            value={plantKey}
+            onChange={(e) => setPlantKey(e.target.value)}
+            placeholder="ESP/Dongle anahtarı"
+          />
+        </div>
+      </div>
 
-      {error && (
-        <div className="rounded-2xl border border-rose-500/60 bg-rose-500/10 px-4 py-3 text-xs text-rose-100">
-          {error}
+      {err && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+          {err}
         </div>
       )}
 
-      <div className="flex justify-end">
-        <button
-          type="submit"
-          disabled={saving}
-          className="inline-flex items-center rounded-xl bg-cyan-500 px-5 py-2.5 text-sm font-medium text-slate-950 shadow-lg shadow-cyan-500/40 hover:bg-cyan-400 disabled:opacity-60"
-        >
-          {saving ? "Kaydediliyor…" : "Tesis Oluştur"}
-        </button>
-      </div>
+      <button
+        disabled={saving}
+        className="w-full rounded-xl bg-cyan-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-cyan-400 disabled:opacity-60"
+      >
+        {saving ? "Kaydediliyor..." : "Tesisi Kaydet"}
+      </button>
     </form>
   );
 }

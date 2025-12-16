@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "next": "^16.0.5",
+    "pg": "^8.16.3",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "recharts": "^3.5.1"
@@ -16,6 +17,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.17",
     "@types/node": "24.10.1",
+    "@types/pg": "^8.16.0",
     "@types/react": "^19.2.7",
     "baseline-browser-mapping": "^2.9.7",
     "typescript": "5.9.3"

@@ -1,3 +1,5 @@
+//components/EnergyFlowDiagram.tsx
+
 "use client";
 
 type LiveLike = {

@@ -1,104 +1,86 @@
 // app/api/plants/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import type { Plant } from "@/lib/types";
-import { getPlants, upsertPlant, removePlant } from "@/lib/sampleData";
+import { pool } from "@/lib/db";
+import { writeErrorLog } from "@/lib/errorLog";
 
-function normalizePhaseType(str: string) {
-  if (str === "single") return "single";
-  if (str === "three") return "three";
-  return "three";
-}
+type PhaseType = "three" | "single";
 
-// GET: tüm tesisleri döner (seed + runtime eklenenler)
 export async function GET() {
-  const plants = getPlants();
-  return NextResponse.json(plants);
+  try {
+    const { rows } = await pool.query(
+      `select
+         id,
+         name,
+         address,
+         timezone,
+         is_active,
+         capacity_kw,
+         phase_type,
+         created_at,
+         updated_at
+       from plants
+       order by id desc`
+    );
+
+    // UI Plant tipine uyum: capacityKw / phaseType camelCase
+    const mapped = rows.map((r: any) => ({
+      id: Number(r.id),
+      name: r.name,
+      address: r.address,
+      timezone: r.timezone,
+      isActive: Boolean(r.is_active),
+      capacityKw: Number(r.capacity_kw ?? 0),
+      phaseType: (r.phase_type ?? "three") as PhaseType,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+
+    return NextResponse.json(mapped);
+  } catch (e: any) {
+    await writeErrorLog({
+      message: e?.message ?? "plants GET failed",
+      stack: e?.stack,
+      route: "/api/plants",
+    });
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
+  }
 }
 
-// POST: yeni tesis ekler / aynı ID varsa günceller
 export async function POST(req: NextRequest) {
-  let body: any;
   try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json(
-      { error: "Geçersiz JSON gövdesi" },
-      { status: 400 }
+    const body = await req.json();
+
+    const name = String(body?.name ?? "").trim();
+    const address = String(body?.address ?? "").trim();
+    const plantKey =
+      body?.plantKey !== undefined && body?.plantKey !== null && String(body.plantKey).trim() !== ""
+        ? String(body.plantKey).trim()
+        : null;
+
+    const capacityKw = Number(body?.capacityKw ?? 0);
+    const phaseType: PhaseType = body?.phaseType === "single" ? "single" : "three";
+
+    if (!name) {
+      return NextResponse.json({ error: "name zorunlu" }, { status: 400 });
+    }
+    if (!Number.isFinite(capacityKw) || capacityKw < 0) {
+      return NextResponse.json({ error: "capacityKw geçersiz" }, { status: 400 });
+    }
+
+    const { rows } = await pool.query(
+      `insert into plants (name, address, plant_key, capacity_kw, phase_type)
+       values ($1,$2,$3,$4,$5)
+       returning id`,
+      [name, address, plantKey, capacityKw, phaseType]
     );
+
+    return NextResponse.json({ ok: true, id: Number(rows[0].id) }, { status: 201 });
+  } catch (e: any) {
+    await writeErrorLog({
+      message: e?.message ?? "plants POST failed",
+      stack: e?.stack,
+      route: "/api/plants",
+    });
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
-
-  const plantId = Number(body.plantId);
-  const name = String(body.name || "").trim();
-
-  if (!plantId || plantId <= 0) {
-    return NextResponse.json(
-      { error: "Geçerli bir Tesis ID (plantId) zorunludur." },
-      { status: 400 }
-    );
-  }
-
-  if (!name) {
-    return NextResponse.json(
-      { error: "Tesis adı zorunludur." },
-      { status: 400 }
-    );
-  }
-
-  const capacityKw = Number(body.capacityKw) || 0;
-  const phaseType = normalizePhaseType(body.phaseType);
-  const location = String(body.address || body.location || "");
-
-  const newPlant: Plant = {
-    id: plantId,
-    name,
-    location,
-    capacityKw,
-    phaseType,
-    status: "online",
-    lastUpdate: new Date().toISOString(),
-  };
-
-  upsertPlant(newPlant);
-
-  console.log("[API] New/updated plant:", newPlant);
-
-  return NextResponse.json(newPlant, { status: 201 });
-}
-
-// DELETE: body içinden plantId alıp tesisi siler
-export async function DELETE(req: NextRequest) {
-  let body: any;
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json(
-      { error: "Geçersiz JSON gövdesi" },
-      { status: 400 }
-    );
-  }
-
-  const plantId = Number(body.plantId ?? body.id);
-
-  if (!plantId || plantId <= 0) {
-    return NextResponse.json(
-      { error: "Geçerli bir plantId zorunludur." },
-      { status: 400 }
-    );
-  }
-
-  const existed = removePlant(plantId);
-
-  if (!existed) {
-    return NextResponse.json(
-      { error: "Tesis bulunamadı" },
-      { status: 404 }
-    );
-  }
-
-  console.log("🗑️ Tesis silindi:", plantId);
-
-  return NextResponse.json(
-    { success: true, plantId },
-    { status: 200 }
-  );
 }

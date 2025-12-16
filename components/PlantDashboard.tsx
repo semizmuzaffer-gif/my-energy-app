@@ -1,7 +1,7 @@
 // components/PlantDashboard.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Plant } from "@/lib/types";
 import EnergyFlowDiagram from "@/components/EnergyFlowDiagram";
 import PlantEnergyGraph, { TelemetryHistoryPoint } from "@/components/PlantEnergyGraph";
@@ -33,94 +33,191 @@ interface Props {
   telemetry?: any;
 }
 
+type ApiPoint = {
+  timestamp?: string;
+  p_total?: number; p_l1?: number; p_l2?: number; p_l3?: number;
+  v_l1?: number; v_l2?: number; v_l3?: number;
+  i_l1?: number; i_l2?: number; i_l3?: number;
+  pcm_soc?: number;
+  bat_soc?: number;
+  mode?: string;
+  meter_ok?: number;
+};
+
+const num = (v: any, fallback = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const safeIso = (v: any) => {
+  try {
+    if (!v) return new Date().toISOString();
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString();
+  } catch {
+    return new Date().toISOString();
+  }
+};
+
+const toTimeLabel = (iso: string) =>
+  new Date(iso).toLocaleTimeString("tr-TR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+
+function mapApiPointToLive(p: ApiPoint): LiveMeasurement {
+  return {
+    p_total: num(p.p_total),
+    p_l1: num(p.p_l1),
+    p_l2: num(p.p_l2),
+    p_l3: num(p.p_l3),
+
+    v_l1: num(p.v_l1),
+    v_l2: num(p.v_l2),
+    v_l3: num(p.v_l3),
+
+    i_l1: num(p.i_l1),
+    i_l2: num(p.i_l2),
+    i_l3: num(p.i_l3),
+
+    mode: String(p.mode ?? "UNKNOWN"),
+    pcm_soc: num(p.pcm_soc),
+    bat_soc: num(p.bat_soc),
+
+    timestamp: safeIso(p.timestamp),
+
+    meter_ok: num(p.meter_ok),
+  };
+}
+
+function mapLiveToHistoryPoint(live: LiveMeasurement): TelemetryHistoryPoint {
+  return {
+    time: toTimeLabel(live.timestamp),
+
+    p_total_kw: live.p_total / 1000,
+    p_l1_kw: live.p_l1 / 1000,
+    p_l2_kw: live.p_l2 / 1000,
+    p_l3_kw: live.p_l3 / 1000,
+
+    v_l1: live.v_l1,
+    v_l2: live.v_l2,
+    v_l3: live.v_l3,
+
+    i_l1: live.i_l1,
+    i_l2: live.i_l2,
+    i_l3: live.i_l3,
+
+    pcm_soc: live.pcm_soc,
+    bat_soc: live.bat_soc,
+  };
+}
+
 export default function PlantDashboard({ plant }: Props) {
   const [liveData, setLiveData] = useState<LiveMeasurement | null>(null);
   const [history, setHistory] = useState<TelemetryHistoryPoint[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchLatest = async () => {
+  // Aynı timestamp tekrar gelirse grafiğe duplicate basmayalım
+  const lastTsRef = useRef<string | null>(null);
+  const initialLoadedRef = useRef(false);
+
+  const fetchTelemetry = async (mode: "init" | "poll") => {
     try {
-      const res = await fetch(`/api/plants/${plant.id}`, { cache: "no-store" });
+      const url =
+        mode === "init"
+          ? `/api/plants/${plant.id}/telemetry?limit=120`
+          : `/api/plants/${plant.id}/telemetry?limit=1`;
+
+      const res = await fetch(url, { cache: "no-store" });
 
       if (!res.ok) {
-        if (res.status === 404) throw new Error("Bu tesis için henüz telemetri verisi yok");
+        if (res.status === 404) {
+          throw new Error("Bu tesis için henüz telemetri verisi yok");
+        }
         throw new Error(`API hatası: ${res.status}`);
       }
 
       const json = await res.json();
-      const snapshot = json.data ?? json;
 
-      const latest: LiveMeasurement = {
-        p_total: snapshot.p_total ?? 0,
-        p_l1: snapshot.p_l1 ?? 0,
-        p_l2: snapshot.p_l2 ?? 0,
-        p_l3: snapshot.p_l3 ?? 0,
+      // API: { plantId, points, latest }
+      const latestRaw: ApiPoint | null = json?.latest ?? null;
+      const pointsRaw: ApiPoint[] = Array.isArray(json?.points) ? json.points : [];
 
-        v_l1: snapshot.v_l1 ?? 0,
-        v_l2: snapshot.v_l2 ?? 0,
-        v_l3: snapshot.v_l3 ?? 0,
+      // 1) İlk açılışta: history’yi points ile doldur
+      if (mode === "init" && pointsRaw.length > 0) {
+        const lives = pointsRaw.map(mapApiPointToLive);
+        const hist = lives.map(mapLiveToHistoryPoint);
 
-        i_l1: snapshot.i_l1 ?? 0,
-        i_l2: snapshot.i_l2 ?? 0,
-        i_l3: snapshot.i_l3 ?? 0,
+        setHistory(hist);
 
-        mode: snapshot.mode ?? "UNKNOWN",
-        pcm_soc: snapshot.pcm_soc ?? 0,
-        bat_soc: snapshot.bat_soc ?? 0,
+        const latestLive = lives[lives.length - 1];
+        setLiveData(latestLive);
+        lastTsRef.current = latestLive.timestamp;
 
-        timestamp: snapshot.timestamp ? new Date(snapshot.timestamp).toISOString() : new Date().toISOString(),
-        meter_ok: snapshot.meter_ok ?? 0,
-      };
+        setError(null);
+        initialLoadedRef.current = true;
+        return;
+      }
 
-      setLiveData(latest);
-      setError(null);
+      // 2) Poll: latest ile sadece akıt
+      if (latestRaw) {
+        const latest = mapApiPointToLive(latestRaw);
 
-      const timeLabel = new Date(latest.timestamp).toLocaleTimeString("tr-TR", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      });
+        // duplicate engelle
+        if (lastTsRef.current && latest.timestamp === lastTsRef.current) {
+          setLiveData(latest); // UI güncel kalsın (mode/meter vs değişebilir)
+          setError(null);
+          return;
+        }
 
-      const next: TelemetryHistoryPoint = {
-        time: timeLabel,
+        lastTsRef.current = latest.timestamp;
+        setLiveData(latest);
+        setError(null);
 
-        p_total_kw: latest.p_total / 1000,
-        p_l1_kw: latest.p_l1 / 1000,
-        p_l2_kw: latest.p_l2 / 1000,
-        p_l3_kw: latest.p_l3 / 1000,
+        const next = mapLiveToHistoryPoint(latest);
 
-        v_l1: latest.v_l1,
-        v_l2: latest.v_l2,
-        v_l3: latest.v_l3,
+        setHistory((prev) => {
+          const updated = [...prev, next];
+          const MAX_POINTS = 90; // ~7.5 dk (5 sn)
+          return updated.length > MAX_POINTS
+            ? updated.slice(updated.length - MAX_POINTS)
+            : updated;
+        });
+        return;
+      }
 
-        i_l1: latest.i_l1,
-        i_l2: latest.i_l2,
-        i_l3: latest.i_l3,
-
-        pcm_soc: latest.pcm_soc,
-        bat_soc: latest.bat_soc,
-      };
-
-      setHistory((prev) => {
-        const updated = [...prev, next];
-        const MAX_POINTS = 90; // ~7.5 dk (5sn)
-        return updated.length > MAX_POINTS ? updated.slice(updated.length - MAX_POINTS) : updated;
-      });
+      // 3) Hiç veri yok
+      if (!initialLoadedRef.current) {
+        setLiveData(null);
+        setHistory([]);
+      }
+      setError("Henüz telemetri yok");
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Bilinmeyen hata");
-      setLiveData(null);
+      setError(err?.message || "Bilinmeyen hata");
+      // bağlantı kesilince grafiği sıfırlamak istemiyorsan bunu kaldırabilirsin:
+      // setLiveData(null);
     }
   };
 
   useEffect(() => {
-    fetchLatest();
-    const id = setInterval(fetchLatest, 5000);
+    // plant değişince reset
+    setLiveData(null);
+    setHistory([]);
+    setError(null);
+    lastTsRef.current = null;
+    initialLoadedRef.current = false;
+
+    fetchTelemetry("init");
+    const id = setInterval(() => fetchTelemetry("poll"), 5000);
+
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plant.id]);
 
-  const meterOk = liveData !== null ? (liveData.meter_ok && liveData.meter_ok > 0) : null;
+  const meterOk =
+    liveData !== null ? (liveData.meter_ok && liveData.meter_ok > 0) : null;
 
   return (
     <div className="space-y-4">
@@ -161,13 +258,13 @@ export default function PlantDashboard({ plant }: Props) {
         </div>
       )}
 
-      {/* ✅ 1) Enerji Akış Şeması en üstte */}
+      {/* 1) Enerji Akış Şeması */}
       <EnergyFlowDiagram live={liveData} />
 
-      {/* ✅ 2) Grafikler ayrı component */}
+      {/* 2) Grafik */}
       <PlantEnergyGraph history={history} />
 
-      {/* ✅ 3) Detaylar altta */}
+      {/* 3) Detaylar */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: "Toplam Güç", value: liveData ? `${(liveData.p_total / 1000).toFixed(3)} kW` : "--" },

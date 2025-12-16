@@ -1,28 +1,58 @@
-// app/plants/[plantId]/page.tsx
-
 import Link from "next/link";
 import PlantDashboard from "@/components/PlantDashboard";
 import type { Plant } from "@/lib/types";
+import { pool } from "@/lib/db";
 
+/* -------------------------------------------------
+   API base (Vercel + local uyumlu)
+-------------------------------------------------- */
 function getApiBase() {
-  return process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3000";
+  return process.env.NEXT_PUBLIC_API_BASE || "";
 }
 
+/* -------------------------------------------------
+   Plant bilgisi (DB’den)
+-------------------------------------------------- */
 async function fetchPlant(plantId: number): Promise<Plant | null> {
-  const base = getApiBase();
-  const res = await fetch(`${base}/api/plants`, {
-    cache: "no-store",
-  });
+  const { rows } = await pool.query(
+    `select
+       id,
+       name,
+       address,
+       timezone,
+       is_active,
+       capacity_kw,
+       phase_type,
+       created_at,
+       updated_at
+     from plants
+     where id = $1
+     limit 1`,
+    [plantId]
+  );
 
-  if (!res.ok) {
-    console.warn("Failed to fetch plants:", res.status);
-    return null;
-  }
+  if (rows.length === 0) return null;
 
-  const list: Plant[] = await res.json();
-  return list.find((p) => p.id === plantId) ?? null;
+  const r: any = rows[0];
+  return {
+    id: Number(r.id),
+    name: r.name,
+    location: r.address ?? "",        // senin UI location kullanıyor
+    address: r.address ?? "",
+    timezone: r.timezone ?? "Europe/Istanbul",
+    isActive: Boolean(r.is_active),
+    capacityKw: Number(r.capacity_kw ?? 0),
+    phaseType: (r.phase_type ?? "three") as "three" | "single",
+    status: "offline",                // şimdilik (telemetry gelince güncelleriz)
+    lastUpdate: new Date().toISOString(),
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  } as any;
 }
 
+/* -------------------------------------------------
+   Page
+-------------------------------------------------- */
 interface Props {
   params: Promise<{ plantId: string }>;
 }
@@ -55,100 +85,81 @@ export default async function PlantPage({ params }: Props) {
     );
   }
 
-  // Telemetry fetch – senin önceki yapını koruyorum
+  /* -------------------------------------------------
+     Telemetry (DB’den son kayıt)
+  -------------------------------------------------- */
   let telemetry: any = null;
-  try {
-    const base = getApiBase();
-    const res = await fetch(`${base}/api/plants/${numericId}`, {
-      cache: "no-store",
-    });
-    if (res.ok) {
-      telemetry = await res.json();
-    } else {
-      console.warn("Telemetry fetch failed:", res.status);
-    }
-  } catch (err) {
-    console.error("Telemetry fetch error:", err);
-  }
+try {
+  const { rows } = await pool.query(
+    `select *
+     from telemetry_readings
+     where plant_id = $1
+     order by ts desc
+     limit 1`,
+    [numericId]
+  );
+  telemetry = rows[0] ?? null;
+} catch (e) {
+  telemetry = null;
+}
 
   return (
     <main className="min-h-screen px-4 py-4 lg:px-10 lg:py-6">
       <div className="max-w-7xl mx-auto space-y-4">
-        {/* Üst başlık – kompakt */}
         <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          {/* Sol taraf */}
           <div className="space-y-2">
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
               Canlı tesis izleme & yönetim
             </div>
+
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
               {plant.name}{" "}
               <span className="text-cyan-300">enerji yönetim paneli</span>
             </h1>
+
             <p className="text-xs md:text-sm text-slate-300 max-w-2xl">
               Tesis performansını gerçek zamanlı izleyin. Parametre ve EMS
               ayarlarını ayrı sayfadan yönetin.
             </p>
 
-            {/* Tesisler sayfasına dön butonu */}
             <Link href="/" className="inline-block mt-1.5">
-              <button className="inline-flex items-center rounded-xl border border-white/20 bg-white/5 px-3.5 py-1.5 text-[11px] md:text-xs font-medium text-slate-100 hover:bg-white/10 transition">
+              <button className="inline-flex items-center rounded-xl border border-white/20 bg-white/5 px-3.5 py-1.5 text-xs font-medium text-slate-100 hover:bg-white/10 transition">
                 ← Tesisler Sayfasına Dön
               </button>
             </Link>
           </div>
 
-          {/* Sağ taraf: özet + Parametre butonu */}
           <div className="w-full max-w-sm flex flex-col gap-2.5">
-            <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-3.5 shadow-lg shadow-cyan-500/20">
-              <div className="absolute -right-8 -top-8 h-20 w-20 rounded-full bg-cyan-400/20 blur-2xl" />
-              <div className="relative space-y-2 text-xs">
-                <p className="uppercase tracking-wide text-slate-300 text-[11px]">
-                  Tesis Özeti
-                </p>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="rounded-2xl bg-black/40 p-2.5 border border-white/10">
-                    <div className="text-[9px] text-slate-400">ID</div>
-                    <div className="text-base font-semibold">{numericId}</div>
-                    <div className="mt-1 text-[10px] text-cyan-300">
-                      sistem kodu
-                    </div>
-                  </div>
-                  <div className="rounded-2xl bg-black/40 p-2.5 border border-white/10">
-                    <div className="text-[9px] text-slate-400">Güç</div>
-                    <div className="text-base font-semibold">
-                      {plant.capacityKw.toFixed(1)} kWp
-                    </div>
-                    <div className="mt-1 text-[10px] text-emerald-300">
-                      kurulu
-                    </div>
-                  </div>
-                  <div className="rounded-2xl bg-black/40 p-2.5 border border-white/10">
-                    <div className="text-[9px] text-slate-400">Faz</div>
-                    <div className="text-base font-semibold">
-                      {plant.phaseType === "three" ? "3F" : "1F"}
-                    </div>
-                    <div className="mt-1 text-[10px] text-violet-300">
-                      faz tipi
-                    </div>
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-3.5 shadow-lg">
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="rounded-xl bg-black/40 p-2 border border-white/10">
+                  <div className="text-[10px] text-slate-400">ID</div>
+                  <div className="text-base font-semibold">{numericId}</div>
+                </div>
+                <div className="rounded-xl bg-black/40 p-2 border border-white/10">
+                  <div className="text-[10px] text-slate-400">Güç</div>
+                  <div className="text-base font-semibold">
+                    {plant.capacityKw.toFixed(1)} kWp
                   </div>
                 </div>
-                <p className="text-[10px] text-slate-400">
-                  Parametre değişiklikleri için aşağıdaki butonu kullanın.
-                </p>
+                <div className="rounded-xl bg-black/40 p-2 border border-white/10">
+                  <div className="text-[10px] text-slate-400">Faz</div>
+                  <div className="text-base font-semibold">
+                    {plant.phaseType === "three" ? "3F" : "1F"}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <Link href={`/plants/${numericId}/settings`} className="w-full">
-              <button className="w-full inline-flex items-center justify-center rounded-xl bg-cyan-500 px-4 py-2 text-xs md:text-sm font-medium text-slate-950 shadow-lg shadow-cyan-500/30 hover:bg-cyan-400 transition">
+            <Link href={`/plants/${numericId}/settings`}>
+              <button className="w-full rounded-xl bg-cyan-500 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-cyan-400 transition">
                 Tesis Parametre Ayarları
               </button>
             </Link>
           </div>
         </header>
 
-        {/* Dashboard bileşeni */}
         <section>
           <PlantDashboard plant={plant} telemetry={telemetry} />
         </section>
