@@ -1,7 +1,7 @@
 import Link from "next/link";
 import PlantDashboard from "@/components/PlantDashboard";
 import type { Plant } from "@/lib/types";
-import { pool } from "@/lib/db";
+import { getPool } from "@/lib/db";
 
 /* -------------------------------------------------
    API base (Vercel + local uyumlu)
@@ -14,6 +14,8 @@ function getApiBase() {
    Plant bilgisi (DB’den)
 -------------------------------------------------- */
 async function fetchPlant(plantId: number): Promise<Plant | null> {
+
+	const pool = getPool();
   const { rows } = await pool.query(
     `select
        id,
@@ -90,6 +92,7 @@ export default async function PlantPage({ params }: Props) {
   -------------------------------------------------- */
   let telemetry: any = null;
 try {
+	const pool = getPool();
   const { rows } = await pool.query(
     `select *
      from telemetry_readings

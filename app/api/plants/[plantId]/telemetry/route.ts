@@ -2,7 +2,7 @@
 export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
-import { pool } from "@/lib/db";
+import { getPool } from "@/lib/db";
 import { writeErrorLog } from "@/lib/errorLog";
 
 type TelemetryInput = {
@@ -135,6 +135,7 @@ export async function POST(
       return NextResponse.json({ error: "No telemetry points" }, { status: 400 });
     }
 
+	const pool = getPool();
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -241,6 +242,7 @@ export async function GET(
   const limit = Math.min(Math.max(Number(limitRaw ?? 120), 1), 2000);
 
   try {
+	  const pool = getPool();
     const { rows } = await pool.query(
       `
 SELECT

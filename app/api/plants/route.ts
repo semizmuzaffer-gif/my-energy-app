@@ -1,12 +1,13 @@
 // app/api/plants/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { pool } from "@/lib/db";
+import { getPool } from "@/lib/db";
 import { writeErrorLog } from "@/lib/errorLog";
 
 type PhaseType = "three" | "single";
 
 export async function GET() {
   try {
+	  const pool = getPool();
     const { rows } = await pool.query(
       `select
          id,
@@ -67,6 +68,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "capacityKw geçersiz" }, { status: 400 });
     }
 
+	const pool = getPool();
     const { rows } = await pool.query(
       `insert into plants (name, address, plant_key, capacity_kw, phase_type)
        values ($1,$2,$3,$4,$5)

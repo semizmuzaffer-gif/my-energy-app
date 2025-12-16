@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pool } from "@/lib/db";
+import { getPool } from "@/lib/db";
 
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
     ? `select * from error_logs ${where} order by created_at desc limit $2`
     : `select * from error_logs order by created_at desc limit $1`;
 
+const pool = getPool();
   const { rows } = await pool.query(sql, args);
   return NextResponse.json(rows);
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { pool } from "@/lib/db";
+import { getPool } from "@/lib/db";
 import { writeErrorLog } from "@/lib/errorLog";
 
 type RouteCtx = { params: Promise<{ plantId: string }> };
@@ -55,6 +55,7 @@ export async function GET(_req: NextRequest, { params }: RouteCtx) {
   const pid = Number(plantId);
 
   try {
+	 const pool = getPool(); 
     const latest = await pool.query(
       `select *
        from plant_settings
@@ -65,6 +66,7 @@ export async function GET(_req: NextRequest, { params }: RouteCtx) {
     );
 
     if (latest.rowCount === 0) {
+		const pool = getPool();
       const created = await pool.query(
         `insert into plant_settings (
           plant_id, plant_name, plant_address,
@@ -124,7 +126,7 @@ export async function POST(req: NextRequest, { params }: RouteCtx) {
 
   try {
     const body = await req.json();
-
+	const pool = getPool();
     const prevRes = await pool.query(
       `select * from plant_settings where plant_id=$1 order by version desc limit 1`,
       [pid]
