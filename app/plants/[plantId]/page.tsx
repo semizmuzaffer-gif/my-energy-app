@@ -1,3 +1,6 @@
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 import Link from "next/link";
 import PlantDashboard from "@/components/PlantDashboard";
 import type { Plant } from "@/lib/types";
@@ -14,8 +17,7 @@ function getApiBase() {
    Plant bilgisi (DB’den)
 -------------------------------------------------- */
 async function fetchPlant(plantId: number): Promise<Plant | null> {
-
-	const pool = getPool();
+  const pool = getPool();
   const { rows } = await pool.query(
     `select
        id,
@@ -39,13 +41,13 @@ async function fetchPlant(plantId: number): Promise<Plant | null> {
   return {
     id: Number(r.id),
     name: r.name,
-    location: r.address ?? "",        // senin UI location kullanıyor
+    location: r.address ?? "",
     address: r.address ?? "",
     timezone: r.timezone ?? "Europe/Istanbul",
     isActive: Boolean(r.is_active),
     capacityKw: Number(r.capacity_kw ?? 0),
     phaseType: (r.phase_type ?? "three") as "three" | "single",
-    status: "offline",                // şimdilik (telemetry gelince güncelleriz)
+    status: "offline",
     lastUpdate: new Date().toISOString(),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -91,20 +93,20 @@ export default async function PlantPage({ params }: Props) {
      Telemetry (DB’den son kayıt)
   -------------------------------------------------- */
   let telemetry: any = null;
-try {
-	const pool = getPool();
-  const { rows } = await pool.query(
-    `select *
-     from telemetry_readings
-     where plant_id = $1
-     order by ts desc
-     limit 1`,
-    [numericId]
-  );
-  telemetry = rows[0] ?? null;
-} catch (e) {
-  telemetry = null;
-}
+  try {
+    const pool = getPool();
+    const { rows } = await pool.query(
+      `select *
+       from telemetry_readings
+       where plant_id = $1
+       order by ts desc
+       limit 1`,
+      [numericId]
+    );
+    telemetry = rows[0] ?? null;
+  } catch (e) {
+    telemetry = null;
+  }
 
   return (
     <main className="min-h-screen px-4 py-4 lg:px-10 lg:py-6">
@@ -117,13 +119,11 @@ try {
             </div>
 
             <h1 className="text-2xl md:text-3xl font-semibold tracking-tight">
-              {plant.name}{" "}
-              <span className="text-cyan-300">enerji yönetim paneli</span>
+              {plant.name} <span className="text-cyan-300">enerji yönetim paneli</span>
             </h1>
 
             <p className="text-xs md:text-sm text-slate-300 max-w-2xl">
-              Tesis performansını gerçek zamanlı izleyin. Parametre ve EMS
-              ayarlarını ayrı sayfadan yönetin.
+              Tesis performansını gerçek zamanlı izleyin. Parametre ve EMS ayarlarını ayrı sayfadan yönetin.
             </p>
 
             <Link href="/" className="inline-block mt-1.5">
@@ -142,9 +142,7 @@ try {
                 </div>
                 <div className="rounded-xl bg-black/40 p-2 border border-white/10">
                   <div className="text-[10px] text-slate-400">Güç</div>
-                  <div className="text-base font-semibold">
-                    {plant.capacityKw.toFixed(1)} kWp
-                  </div>
+                  <div className="text-base font-semibold">{plant.capacityKw.toFixed(1)} kWp</div>
                 </div>
                 <div className="rounded-xl bg-black/40 p-2 border border-white/10">
                   <div className="text-[10px] text-slate-400">Faz</div>
