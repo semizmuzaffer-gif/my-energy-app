@@ -1,6 +1,8 @@
 // components/PlantSettings.tsx
 "use client";
 
+import PlantDeleteButton from "@/components/PlantDeleteButton";
+
 import { useEffect, useState } from "react";
 
 type GridFeedMode = "export" | "self-consume" | "no-export";
@@ -51,6 +53,12 @@ const baseDefaultSettings: PlantSettingsValues = {
 interface Props {
   plantId: number;
   initialName?: string; // 🔴 yeni prop
+}
+function formatTimeTR(iso?: string | null) {
+  if (!iso || typeof iso !== "string") return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
 }
 
 export default function PlantSettings({ plantId, initialName }: Props) {
@@ -535,7 +543,7 @@ export default function PlantSettings({ plantId, initialName }: Props) {
               pik talep limitini aşmamaya çalışır.
             </p>
           </div>
-          <button
+   <button
             type="button"
             onClick={() =>
               updateField("demandControlEnabled", !values.demandControlEnabled)
@@ -556,16 +564,31 @@ export default function PlantSettings({ plantId, initialName }: Props) {
         </div>
       </div>
 
-      {/* KAYDET */}
-      <div className="flex justify-end pt-2">
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className="inline-flex items-center rounded-xl bg-cyan-500 px-4 py-2 text-sm font-medium text-slate-950 shadow-lg shadow-cyan-500/40 hover:bg-cyan-400 disabled:opacity-60"
-        >
-          {saving ? "Kaydediliyor…" : "Değişiklikleri Kaydet"}
-        </button>
+      {/* KAYDET + SİL */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between pt-2">
+        <div className="rounded-2xl border border-red-400/20 bg-red-500/5 px-4 py-3">
+          <p className="text-sm font-medium text-red-200">Tehlikeli İşlemler</p>
+          <p className="text-[11px] text-slate-400 mt-1">
+            Tesis silme işlemi geri alınamaz. Master şifre gerektirir.
+          </p>
+          <div className="mt-3">
+            <PlantDeleteButton
+              plantId={plantId}
+              plantName={values.plantName}
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end md:justify-end">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="inline-flex items-center rounded-xl bg-cyan-500 px-4 py-2 text-sm font-medium text-slate-950 shadow-lg shadow-cyan-500/40 hover:bg-cyan-400 disabled:opacity-60"
+          >
+            {saving ? "Kaydediliyor…" : "Değişiklikleri Kaydet"}
+          </button>
+        </div>
       </div>
     </section>
   );

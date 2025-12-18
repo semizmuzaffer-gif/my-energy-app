@@ -1,75 +1,90 @@
+// app/api/plants/[plantId]/settings/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 import { getPool } from "@/lib/db";
 import { writeErrorLog } from "@/lib/errorLog";
 
-type RouteCtx = { params: Promise<{ plantId: string }> };
+export const runtime = "nodejs";
+
+type GridFeedMode =
+  | "export"
+  | "self-consume"
+  | "no-export"
+  | "no-import"
+  | string;
+
+type EmsMode = "AUTO" | "PV_FIRST" | "GRID_FIRST" | "MANUAL" | string;
 
 const defaultBase = {
-  plantName: "",
-  plantAddress: "",
   pcmCapacityKWh: 0,
   lifepo4CapacityKWh: 0,
   hasPV: true,
   pvAcPeakPower: 0,
   pvDcPeakPower: 0,
-  gridFeedMode: "self-consume",
+  gridFeedMode: "self-consume" as GridFeedMode,
   maxFeedPower: 0,
   alwaysExportEnabled: false,
   alwaysExportPower: 150,
   alwaysImportEnabled: false,
   alwaysImportPower: 150,
-  emsMode: "AUTO",
+  emsMode: "AUTO" as EmsMode,
   maxGridPowerKw: 0,
   maxGenPowerKw: 0,
   demandLimitKw: 0,
   demandControlEnabled: true,
+
+  // PID defaults
+  pcmPidEnabled: false,
+  batPidEnabled: false,
+  pidKp: 1.0,
+  pidKd: 0.0,
 };
 
-function rowToSettings(r: any) {
-  return {
-    plantName: r.plant_name ?? "",
-    plantAddress: r.plant_address ?? "",
-    pcmCapacityKWh: Number(r.pcm_capacity_kwh ?? 0),
-    lifepo4CapacityKWh: Number(r.lifepo4_capacity_kwh ?? 0),
-    hasPV: Boolean(r.has_pv),
-    pvAcPeakPower: Number(r.pv_ac_peak_power ?? 0),
-    pvDcPeakPower: Number(r.pv_dc_peak_power ?? 0),
-    gridFeedMode: r.grid_feed_mode ?? "self-consume",
-    maxFeedPower: Number(r.max_feed_power ?? 0),
-    alwaysExportEnabled: Boolean(r.always_export_enabled),
-    alwaysExportPower: Number(r.always_export_power ?? 150),
-    alwaysImportEnabled: Boolean(r.always_import_enabled),
-    alwaysImportPower: Number(r.always_import_power ?? 150),
-    emsMode: r.ems_mode ?? "AUTO",
-    maxGridPowerKw: Number(r.max_grid_power_kw ?? 0),
-    maxGenPowerKw: Number(r.max_gen_power_kw ?? 0),
-    demandLimitKw: Number(r.demand_limit_kw ?? 0),
-    demandControlEnabled: Boolean(r.demand_control_enabled),
-    updatedAt: new Date(r.updated_at).toISOString(),
-    version: Number(r.version ?? 1),
-  };
+function pidNum(v: any, fallback: number) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-export async function GET(_req: NextRequest, { params }: RouteCtx) {
+function toBool(v: any, fallback: boolean) {
+  if (typeof v === "boolean") return v;
+  if (v === 1 || v === "1" || v === "true") return true;
+  if (v === 0 || v === "0" || v === "false") return false;
+  return fallback;
+}
+
+type Ctx = { params: Promise<{ plantId: string }> };
+
+export async function GET(_req: NextRequest, { params }: Ctx) {
   const { plantId } = await params;
-  const pid = Number(plantId);
+
+  // ✅ Number() yerine parseInt (NaN riskini azaltır)
+  const pid = Number.parseInt(plantId ?? "", 10);
+
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return NextResponse.json({ error: "Invalid plantId" }, { status: 400 });
+  }
 
   try {
-	 const pool = getPool(); 
-    const latest = await pool.query(
-      `select *
-       from plant_settings
-       where plant_id=$1
-       order by version desc
-       limit 1`,
+    const pool = getPool();
+
+    // 1) plants'tan isim/adres
+    const p = await pool.query(`select name, address from plants where id=$1`, [
+      pid,
+    ]);
+    if (p.rowCount === 0) {
+      return NextResponse.json({ error: "Plant not found" }, { status: 404 });
+    }
+
+    // 2) plant_settings tek satır (yoksa oluştur)
+    let s = await pool.query(
+      `select * from plant_settings where plant_id=$1 limit 1`,
       [pid]
     );
 
-    if (latest.rowCount === 0) {
-		const pool = getPool();
-      const created = await pool.query(
+    if (s.rowCount === 0) {
+      await pool.query(
         `insert into plant_settings (
-          plant_id, plant_name, plant_address,
+          plant_id,
           pcm_capacity_kwh, lifepo4_capacity_kwh,
           has_pv, pv_ac_peak_power, pv_dc_peak_power,
           grid_feed_mode, max_feed_power,
@@ -77,14 +92,13 @@ export async function GET(_req: NextRequest, { params }: RouteCtx) {
           always_import_enabled, always_import_power,
           ems_mode, max_grid_power_kw, max_gen_power_kw,
           demand_limit_kw, demand_control_enabled,
-          version, updated_at
-        )
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-        returning *`,
+          pcm_pid_enabled, bat_pid_enabled, pid_kp, pid_kd,
+          updated_at
+        ) values (
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,now()
+        )`,
         [
           pid,
-          defaultBase.plantName,
-          defaultBase.plantAddress,
           defaultBase.pcmCapacityKWh,
           defaultBase.lifepo4CapacityKWh,
           defaultBase.hasPV,
@@ -101,14 +115,54 @@ export async function GET(_req: NextRequest, { params }: RouteCtx) {
           defaultBase.maxGenPowerKw,
           defaultBase.demandLimitKw,
           defaultBase.demandControlEnabled,
-          1,
-          new Date().toISOString(),
+          defaultBase.pcmPidEnabled,
+          defaultBase.batPidEnabled,
+          defaultBase.pidKp,
+          defaultBase.pidKd,
         ]
       );
-      return NextResponse.json(rowToSettings(created.rows[0]));
+
+      s = await pool.query(
+        `select * from plant_settings where plant_id=$1 limit 1`,
+        [pid]
+      );
     }
 
-    return NextResponse.json(rowToSettings(latest.rows[0]));
+    const row = s.rows[0];
+
+    return NextResponse.json({
+      // plant bilgisi plants'tan gelir (tek doğru kaynak)
+      plantName: p.rows[0].name ?? "",
+      plantAddress: p.rows[0].address ?? "",
+
+      // settings
+      pcmCapacityKWh: Number(row.pcm_capacity_kwh ?? 0),
+      lifepo4CapacityKWh: Number(row.lifepo4_capacity_kwh ?? 0),
+      hasPV: Boolean(row.has_pv),
+      pvAcPeakPower: Number(row.pv_ac_peak_power ?? 0),
+      pvDcPeakPower: Number(row.pv_dc_peak_power ?? 0),
+      gridFeedMode: (row.grid_feed_mode ?? "self-consume") as GridFeedMode,
+      maxFeedPower: Number(row.max_feed_power ?? 0),
+      alwaysExportEnabled: Boolean(row.always_export_enabled),
+      alwaysExportPower: Number(row.always_export_power ?? 150),
+      alwaysImportEnabled: Boolean(row.always_import_enabled),
+      alwaysImportPower: Number(row.always_import_power ?? 150),
+      emsMode: (row.ems_mode ?? "AUTO") as EmsMode,
+      maxGridPowerKw: Number(row.max_grid_power_kw ?? 0),
+      maxGenPowerKw: Number(row.max_gen_power_kw ?? 0),
+      demandLimitKw: Number(row.demand_limit_kw ?? 0),
+      demandControlEnabled: Boolean(row.demand_control_enabled),
+
+      // PID
+      pcmPidEnabled: Boolean(row.pcm_pid_enabled),
+      batPidEnabled: Boolean(row.bat_pid_enabled),
+      pidKp: Number(row.pid_kp ?? 1.0),
+      pidKd: Number(row.pid_kd ?? 0.0),
+
+      updatedAt: row.updated_at
+        ? new Date(row.updated_at).toISOString()
+        : new Date().toISOString(),
+    });
   } catch (e: any) {
     await writeErrorLog({
       plantId: pid,
@@ -120,70 +174,163 @@ export async function GET(_req: NextRequest, { params }: RouteCtx) {
   }
 }
 
-export async function POST(req: NextRequest, { params }: RouteCtx) {
+export async function POST(req: NextRequest, { params }: Ctx) {
   const { plantId } = await params;
-  const pid = Number(plantId);
+
+  // ✅ Number() yerine parseInt
+  const pid = Number.parseInt(plantId ?? "", 10);
+
+  if (!Number.isFinite(pid) || pid <= 0) {
+    return NextResponse.json({ error: "Invalid plantId" }, { status: 400 });
+  }
 
   try {
     const body = await req.json();
-	const pool = getPool();
-    const prevRes = await pool.query(
-      `select * from plant_settings where plant_id=$1 order by version desc limit 1`,
-      [pid]
-    );
+    const pool = getPool();
 
-    const prev = prevRes.rowCount ? rowToSettings(prevRes.rows[0]) : { ...defaultBase, updatedAt: new Date().toISOString(), version: 0 };
-
-    const merged = { ...prev, ...body, updatedAt: new Date().toISOString() };
-
-    // iş kuralı
-    if (merged.alwaysExportEnabled) {
-      merged.gridFeedMode = "export";
-      merged.alwaysImportEnabled = false;
+    // ✅ DB'den mevcut plant name/address al (plantName boş gelirse fallback)
+    const p0 = await pool.query(`select name, address from plants where id=$1`, [
+      pid,
+    ]);
+    if (p0.rowCount === 0) {
+      return NextResponse.json({ error: "Plant not found" }, { status: 404 });
     }
 
-    const nextVersion = (prev.version ?? 0) + 1;
+    const dbName = String(p0.rows[0]?.name ?? "").trim();
+    const dbAddr = String(p0.rows[0]?.address ?? "").trim();
 
-    const saved = await pool.query(
+    // 1) Plant adı/adresi -> plants tablosuna yaz (Plantlar ekranı buradan besleniyor)
+    // ✅ body boş gelirse DB'den tamamla
+    const plantName = String(body?.plantName ?? "").trim() || dbName;
+    const plantAddress = String(body?.plantAddress ?? "").trim() || dbAddr;
+
+    // ✅ Hâlâ boşsa gerçekten sorun var
+    if (!plantName) {
+      return NextResponse.json({ error: "plantName zorunlu" }, { status: 400 });
+    }
+
+    await pool.query(
+      `update plants set name=$1, address=$2, updated_at=now() where id=$3`,
+      [plantName, plantAddress, pid]
+    );
+
+    // 2) business rule (alwaysExportEnabled)
+    const alwaysExportEnabled = toBool(body?.alwaysExportEnabled, false);
+    const alwaysImportEnabled = alwaysExportEnabled
+      ? false
+      : toBool(body?.alwaysImportEnabled, false);
+    const gridFeedMode: GridFeedMode = alwaysExportEnabled
+      ? "export"
+      : String(body?.gridFeedMode ?? "self-consume");
+
+    // 3) Settings -> upsert (tek satır)
+    await pool.query(
       `insert into plant_settings (
-        plant_id, plant_name, plant_address,
-        pcm_capacity_kwh, lifepo4_capacity_kwh,
-        has_pv, pv_ac_peak_power, pv_dc_peak_power,
-        grid_feed_mode, max_feed_power,
-        always_export_enabled, always_export_power,
-        always_import_enabled, always_import_power,
-        ems_mode, max_grid_power_kw, max_gen_power_kw,
-        demand_limit_kw, demand_control_enabled,
-        version, updated_at
-      )
-      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
-      returning *`,
+         plant_id,
+         pcm_capacity_kwh, lifepo4_capacity_kwh,
+         has_pv, pv_ac_peak_power, pv_dc_peak_power,
+         grid_feed_mode, max_feed_power,
+         always_export_enabled, always_export_power,
+         always_import_enabled, always_import_power,
+         ems_mode, max_grid_power_kw, max_gen_power_kw,
+         demand_limit_kw, demand_control_enabled,
+         pcm_pid_enabled, bat_pid_enabled, pid_kp, pid_kd,
+         updated_at
+       ) values (
+         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,now()
+       )
+       on conflict (plant_id) do update set
+         pcm_capacity_kwh=excluded.pcm_capacity_kwh,
+         lifepo4_capacity_kwh=excluded.lifepo4_capacity_kwh,
+         has_pv=excluded.has_pv,
+         pv_ac_peak_power=excluded.pv_ac_peak_power,
+         pv_dc_peak_power=excluded.pv_dc_peak_power,
+         grid_feed_mode=excluded.grid_feed_mode,
+         max_feed_power=excluded.max_feed_power,
+         always_export_enabled=excluded.always_export_enabled,
+         always_export_power=excluded.always_export_power,
+         always_import_enabled=excluded.always_import_enabled,
+         always_import_power=excluded.always_import_power,
+         ems_mode=excluded.ems_mode,
+         max_grid_power_kw=excluded.max_grid_power_kw,
+         max_gen_power_kw=excluded.max_gen_power_kw,
+         demand_limit_kw=excluded.demand_limit_kw,
+         demand_control_enabled=excluded.demand_control_enabled,
+         pcm_pid_enabled=excluded.pcm_pid_enabled,
+         bat_pid_enabled=excluded.bat_pid_enabled,
+         pid_kp=excluded.pid_kp,
+         pid_kd=excluded.pid_kd,
+         updated_at=now()
+      `,
       [
         pid,
-        String(merged.plantName ?? ""),
-        String(merged.plantAddress ?? ""),
-        Number(merged.pcmCapacityKWh ?? 0),
-        Number(merged.lifepo4CapacityKWh ?? 0),
-        Boolean(merged.hasPV),
-        Number(merged.pvAcPeakPower ?? 0),
-        Number(merged.pvDcPeakPower ?? 0),
-        String(merged.gridFeedMode ?? "self-consume"),
-        Number(merged.maxFeedPower ?? 0),
-        Boolean(merged.alwaysExportEnabled),
-        Number(merged.alwaysExportPower ?? 150),
-        Boolean(merged.alwaysImportEnabled),
-        Number(merged.alwaysImportPower ?? 150),
-        String(merged.emsMode ?? "AUTO"),
-        Number(merged.maxGridPowerKw ?? 0),
-        Number(merged.maxGenPowerKw ?? 0),
-        Number(merged.demandLimitKw ?? 0),
-        Boolean(merged.demandControlEnabled),
-        nextVersion,
-        merged.updatedAt,
+        Number(body?.pcmCapacityKWh ?? 0),
+        Number(body?.lifepo4CapacityKWh ?? 0),
+        toBool(body?.hasPV, true),
+        Number(body?.pvAcPeakPower ?? 0),
+        Number(body?.pvDcPeakPower ?? 0),
+        gridFeedMode,
+        Number(body?.maxFeedPower ?? 0),
+        alwaysExportEnabled,
+        Number(body?.alwaysExportPower ?? 150),
+        alwaysImportEnabled,
+        Number(body?.alwaysImportPower ?? 150),
+        String(body?.emsMode ?? "AUTO"),
+        Number(body?.maxGridPowerKw ?? 0),
+        Number(body?.maxGenPowerKw ?? 0),
+        Number(body?.demandLimitKw ?? 0),
+        toBool(body?.demandControlEnabled, true),
+
+        // PID
+        toBool(body?.pcmPidEnabled, false),
+        toBool(body?.batPidEnabled, false),
+        pidNum(body?.pidKp, 1.0),
+        pidNum(body?.pidKd, 0.0),
       ]
     );
 
-    return NextResponse.json({ ok: true, settings: rowToSettings(saved.rows[0]) });
+    // 4) Kaydedilmiş son halini döndür (DB kaynaklı)
+    const p = await pool.query(`select name, address from plants where id=$1`, [
+      pid,
+    ]);
+    const s = await pool.query(
+      `select * from plant_settings where plant_id=$1 limit 1`,
+      [pid]
+    );
+
+    return NextResponse.json({
+      ok: true,
+      settings: {
+        plantName: p.rows[0]?.name ?? plantName,
+        plantAddress: p.rows[0]?.address ?? plantAddress,
+        pcmCapacityKWh: Number(s.rows[0]?.pcm_capacity_kwh ?? 0),
+        lifepo4CapacityKWh: Number(s.rows[0]?.lifepo4_capacity_kwh ?? 0),
+        hasPV: Boolean(s.rows[0]?.has_pv),
+        pvAcPeakPower: Number(s.rows[0]?.pv_ac_peak_power ?? 0),
+        pvDcPeakPower: Number(s.rows[0]?.pv_dc_peak_power ?? 0),
+        gridFeedMode: (s.rows[0]?.grid_feed_mode ??
+          "self-consume") as GridFeedMode,
+        maxFeedPower: Number(s.rows[0]?.max_feed_power ?? 0),
+        alwaysExportEnabled: Boolean(s.rows[0]?.always_export_enabled),
+        alwaysExportPower: Number(s.rows[0]?.always_export_power ?? 150),
+        alwaysImportEnabled: Boolean(s.rows[0]?.always_import_enabled),
+        alwaysImportPower: Number(s.rows[0]?.always_import_power ?? 150),
+        emsMode: (s.rows[0]?.ems_mode ?? "AUTO") as EmsMode,
+        maxGridPowerKw: Number(s.rows[0]?.max_grid_power_kw ?? 0),
+        maxGenPowerKw: Number(s.rows[0]?.max_gen_power_kw ?? 0),
+        demandLimitKw: Number(s.rows[0]?.demand_limit_kw ?? 0),
+        demandControlEnabled: Boolean(s.rows[0]?.demand_control_enabled),
+
+        pcmPidEnabled: Boolean(s.rows[0]?.pcm_pid_enabled),
+        batPidEnabled: Boolean(s.rows[0]?.bat_pid_enabled),
+        pidKp: Number(s.rows[0]?.pid_kp ?? 1.0),
+        pidKd: Number(s.rows[0]?.pid_kd ?? 0.0),
+
+        updatedAt: s.rows[0]?.updated_at
+          ? new Date(s.rows[0].updated_at).toISOString()
+          : new Date().toISOString(),
+      },
+    });
   } catch (e: any) {
     await writeErrorLog({
       plantId: pid,
